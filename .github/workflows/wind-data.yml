@@ -1,0 +1,43 @@
+name: Update wind data
+
+on:
+  schedule:
+    # GFS publishes new cycles every 6h (00/06/12/18 UTC); the 1-degree filtered product is
+    # usually available roughly 4-5h after the cycle time, so this runs shortly after each
+    # cycle should realistically be ready. fetch-wind.js also falls back to earlier cycles on
+    # its own if a given one isn't published yet, so exact timing here isn't critical.
+    - cron: '30 4,10,16,22 * * *'
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab to test it
+
+permissions:
+  contents: write # needed to commit the updated wind-data/latest.json back to this repo
+
+jobs:
+  update-wind-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Install a JRE (grib2json is a small Java tool)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends default-jre
+
+      - name: Vendor the grib2json converter from wind-server
+        run: |
+          git clone --depth 1 https://github.com/Flowm/wind-server.git /tmp/wind-server-src
+          rm -rf converter
+          cp -r /tmp/wind-server-src/converter converter
+          chmod +x converter/bin/grib2json
+
+      - name: Fetch latest GFS wind data and convert it
+        env:
+          JAVA_HOME: /usr
+        run: node scripts/fetch-wind.js
+
+      - name: Commit updated wind data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add wind-data/latest.json wind-data/meta.json
+          git diff --cached --quiet && echo "No change in wind data - skipping commit" || git commit -m "Update wind data ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push
